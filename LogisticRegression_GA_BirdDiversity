@@ -1,0 +1,115 @@
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import LabelEncoder
+
+# Load dataset
+# This reads the CSV file into a DataFrame
+df = pd.read_csv('/content/sample_data/bird-diversity.csv')
+
+# Select the features (independent variables) we want to use
+features = ['Heterozygosity', 'Allelic richness', 'Breeding range size', 'Body mass', 'Latitude']
+
+# Extract the feature values (X) and target labels (y)
+X = df[features].values
+
+# Encode target labels (Resident = 0, Migratory = 1)
+le = LabelEncoder()
+y = le.fit_transform(df['Migratory status'])
+
+# Split the data into training and testing sets (80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Genetic Algorithm (GA) Parameters
+population_size = 10      # Total individuals in one generation
+generations = 20          # Total number of generations to evolve
+mutation_rate = 0.1       # Probability of mutation for each gene
+num_features = X.shape[1] # Number of features (5 in this case)
+
+# Step 1: Initialize the population with random 0s and 1s (chromosomes)
+# Each individual is a binary string (1 = feature selected, 0 = not selected)
+def initialize_population():
+    return np.random.randint(2, size=(population_size, num_features))
+
+# Step 2: Define the fitness function
+# This evaluates how good an individual is based on classification accuracy
+def fitness(individual):
+    indices = [i for i in range(num_features) if individual[i] == 1]  # Select only features with 1
+    if len(indices) == 0:
+        return 0  # If no features selected, fitness is 0
+
+    model = LogisticRegression(max_iter=500)
+    model.fit(X_train[:, indices], y_train)  # Train using selected features
+    preds = model.predict(X_test[:, indices])  # Predict on test set
+    return accuracy_score(y_test, preds)  # Return accuracy as fitness
+
+# Step 3: Select the two best individuals (parents) based on fitness
+def select_parents(pop, fits):
+    if len(pop) < 2:
+        return [], []
+    idx = np.argsort(fits)[-2:]  # Get indices of top 2 fitness scores
+    return pop[idx[0]], pop[idx[1]]  # Return top 2 individuals
+
+# Step 4: Perform crossover (combine two parents to create new individuals)
+def crossover(p1, p2):
+    if len(p1) != len(p2) or len(p1) < 2:
+        return p1.copy(), p2.copy()  # Fallback if something goes wrong
+    point = np.random.randint(1, num_features - 1)  # Random crossover point
+    return np.concatenate([p1[:point], p2[point:]]), np.concatenate([p2[:point], p1[point:]])
+
+# Step 5: Mutation (randomly flip bits with a probability)
+def mutate(ind):
+    mutated_ind = ind.copy()
+    for i in range(num_features):
+        if np.random.rand() < mutation_rate:
+            mutated_ind[i] = 1 - mutated_ind[i]  # Flip the bit (0->1 or 1->0)
+    return mutated_ind
+
+# Step 6: Run the Genetic Algorithm
+population = initialize_population()  # Start with a random population
+
+for generation in range(generations):
+    fits = [fitness(ind) for ind in population]  # Calculate fitness of all individuals
+
+    if not fits:
+        print(f"Generation {generation}: No valid fitnesses found, stopping GA.")
+        break
+
+    p1, p2 = select_parents(population, fits)  # Select best parents
+
+    if len(p1) == 0 or len(p2) == 0:
+        print(f"Generation {generation}: Parent selection failed, stopping GA.")
+        break
+
+    new_population = []
+    num_pairs = population_size // 2
+    if num_pairs == 0 and population_size > 0:
+        num_pairs = 1  # Ensure at least one pair exists
+
+    for _ in range(num_pairs):
+        c1, c2 = crossover(p1, p2)  # Crossover parents
+        new_population.append(mutate(c1))  # Mutate children
+        new_population.append(mutate(c2))
+
+    if population_size % 2 != 0 and len(new_population) < population_size:
+        new_population.append(mutate(c1))  # Add one more individual to keep population size same
+
+    population = np.array(new_population)  # Update population
+
+# Step 7: Final Evaluation
+final_fits = [fitness(ind) for ind in population]  # Evaluate last generation
+
+if final_fits:
+    best_idx = np.argmax(final_fits)  # Find the best fitness
+    best_ind = population[best_idx]   # Get the best individual
+
+    if best_ind.shape[0] == num_features:
+        selected_features = [features[i] for i in range(num_features) if best_ind[i] == 1]
+        print("Best Feature Subset:", selected_features)
+        print("Accuracy:", final_fits[best_idx])
+    else:
+        print("Error: Best individual found has incorrect shape.")
+else:
+    print("Error: No final fitnesses could be calculated.")
